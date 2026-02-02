@@ -38,7 +38,7 @@ export default function GreenScreenRemover() {
     const [exportProgress, setExportProgress] = useState(0);
     const [exportStatus, setExportStatus] = useState('');
     const [exportQuality, setExportQuality] = useState('720p'); // '480p', '720p', '1080p'
-    const [exportFormat, setExportFormat] = useState('webm'); // 'webm', 'gif'
+    const [exportFormat, setExportFormat] = useState('webm'); // 'webm', 'mp4', 'gif'
 
     // History for undo/redo
     const [history, setHistory] = useState([]);
@@ -420,12 +420,31 @@ export default function GreenScreenRemover() {
                 URL.revokeObjectURL(url);
 
             } else {
-                // WebM export
+                // WebM or MP4 export
                 setExportStatus('Extraction des frames...');
+
+                // Determine mime type based on format and browser support
+                let mimeType = 'video/webm;codecs=vp8';
+                let fileExtension = 'webm';
+
+                if (exportFormat === 'mp4') {
+                    // Try MP4 first (Safari), fallback to WebM
+                    if (MediaRecorder.isTypeSupported('video/mp4')) {
+                        mimeType = 'video/mp4';
+                        fileExtension = 'mp4';
+                    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
+                        mimeType = 'video/webm;codecs=h264';
+                        fileExtension = 'webm';
+                        setExportStatus('MP4 non supporté, export en WebM H.264...');
+                    } else {
+                        fileExtension = 'webm';
+                        setExportStatus('MP4 non supporté, export en WebM...');
+                    }
+                }
 
                 const stream = offCanvas.captureStream(fps);
                 const mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'video/webm;codecs=vp8',
+                    mimeType,
                     videoBitsPerSecond: quality.bitrate
                 });
 
@@ -489,11 +508,11 @@ export default function GreenScreenRemover() {
                     mediaRecorder.stop();
                 });
 
-                const blob = new Blob(chunks, { type: 'video/webm' });
+                const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = `stepup-video-${Date.now()}.webm`;
+                link.download = `stepup-video-${Date.now()}.${fileExtension}`;
                 link.click();
                 URL.revokeObjectURL(url);
             }
@@ -950,6 +969,12 @@ export default function GreenScreenRemover() {
                                         className={`px-3 py-1 rounded-lg text-sm font-medium transition-all ${exportFormat === 'webm' ? 'bg-purple-500 text-white' : 'bg-slate-600 text-gray-300'}`}
                                     >
                                         WebM
+                                    </button>
+                                    <button
+                                        onClick={() => setExportFormat('mp4')}
+                                        className={`px-3 py-1 rounded-lg text-sm font-medium transition-all ${exportFormat === 'mp4' ? 'bg-purple-500 text-white' : 'bg-slate-600 text-gray-300'}`}
+                                    >
+                                        MP4
                                     </button>
                                     <button
                                         onClick={() => setExportFormat('gif')}
