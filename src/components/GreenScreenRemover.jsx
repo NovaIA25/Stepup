@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, Sliders, Play, Pause, RotateCcw, ArrowLeft, Image, Video, Sparkles } from 'lucide-react';
+import { Upload, Download, Sliders, Play, Pause, RotateCcw, Image, Video, Sparkles, Film, Loader2 } from 'lucide-react';
 
 export default function GreenScreenRemover() {
     const [mediaFile, setMediaFile] = useState(null);
@@ -8,11 +8,15 @@ export default function GreenScreenRemover() {
     const [smoothness, setSmoothness] = useState(10);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingProgress, setRecordingProgress] = useState(0);
 
     const canvasRef = useRef(null);
     const videoRef = useRef(null);
     const imageRef = useRef(null);
     const animationRef = useRef(null);
+    const mediaRecorderRef = useRef(null);
+    const recordedChunksRef = useRef([]);
 
     const removeGreenScreen = (sourceElement, ctx, canvas) => {
         if (!sourceElement) return;
@@ -148,12 +152,97 @@ export default function GreenScreenRemover() {
         link.click();
     };
 
+    const downloadVideo = async () => {
+        if (!videoRef.current || !canvasRef.current || isRecording) return;
+
+        setIsRecording(true);
+        setRecordingProgress(0);
+        recordedChunksRef.current = [];
+
+        const canvas = canvasRef.current;
+        const video = videoRef.current;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        // Configure canvas stream
+        const stream = canvas.captureStream(30);
+
+        // Try WebM with VP9, fallback to VP8
+        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+            ? 'video/webm;codecs=vp9'
+            : 'video/webm;codecs=vp8';
+
+        const mediaRecorder = new MediaRecorder(stream, {
+            mimeType,
+            videoBitsPerSecond: 5000000
+        });
+
+        mediaRecorderRef.current = mediaRecorder;
+
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                recordedChunksRef.current.push(event.data);
+            }
+        };
+
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `stepup-video-${Date.now()}.webm`;
+            link.click();
+            URL.revokeObjectURL(url);
+            setIsRecording(false);
+            setRecordingProgress(0);
+        };
+
+        // Start recording
+        mediaRecorder.start(100);
+
+        // Reset video to beginning
+        video.currentTime = 0;
+        video.muted = true;
+
+        // Process video frames
+        const processFrame = () => {
+            if (video.ended || video.paused) {
+                mediaRecorder.stop();
+                return;
+            }
+
+            removeGreenScreen(video, ctx, canvas);
+            setRecordingProgress((video.currentTime / video.duration) * 100);
+            requestAnimationFrame(processFrame);
+        };
+
+        video.onended = () => {
+            if (mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+        };
+
+        await video.play();
+        processFrame();
+    };
+
+    const cancelRecording = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            mediaRecorderRef.current.stop();
+        }
+        if (videoRef.current) {
+            videoRef.current.pause();
+        }
+        setIsRecording(false);
+        setRecordingProgress(0);
+    };
+
     const reset = () => {
         setMediaFile(null);
         setMediaType(null);
         setThreshold(100);
         setSmoothness(10);
         setIsPlaying(false);
+        setIsRecording(false);
         if (animationRef.current) {
             cancelAnimationFrame(animationRef.current);
         }
@@ -182,8 +271,8 @@ export default function GreenScreenRemover() {
                     {!mediaFile && (
                         <label
                             className={`flex flex-col items-center justify-center w-full h-64 border-2 border-dashed rounded-2xl cursor-pointer transition-all ${isDragging
-                                    ? 'border-green-500 bg-green-500/10'
-                                    : 'border-slate-600 hover:border-green-500/50 bg-slate-700/30 hover:bg-slate-700/50'
+                                ? 'border-green-500 bg-green-500/10'
+                                : 'border-slate-600 hover:border-green-500/50 bg-slate-700/30 hover:bg-slate-700/50'
                                 }`}
                             onDragOver={handleDragOver}
                             onDragLeave={handleDragLeave}
@@ -263,6 +352,31 @@ export default function GreenScreenRemover() {
                                 </div>
                             </div>
 
+                            {/* Recording progress */}
+                            {isRecording && (
+                                <div className="p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-2 text-purple-400">
+                                            <Loader2 className="w-5 h-5 animate-spin" />
+                                            <span className="font-medium">Export vidéo en cours...</span>
+                                        </div>
+                                        <span className="text-purple-400 font-mono">{Math.round(recordingProgress)}%</span>
+                                    </div>
+                                    <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300"
+                                            style={{ width: `${recordingProgress}%` }}
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={cancelRecording}
+                                        className="mt-3 text-sm text-gray-400 hover:text-white transition-colors"
+                                    >
+                                        Annuler
+                                    </button>
+                                </div>
+                            )}
+
                             {/* Controls */}
                             <div className="grid md:grid-cols-2 gap-6 p-6 bg-slate-700/30 rounded-2xl border border-slate-600/50">
                                 {/* Threshold */}
@@ -312,7 +426,7 @@ export default function GreenScreenRemover() {
 
                             {/* Action buttons */}
                             <div className="flex flex-wrap gap-4 justify-center">
-                                {mediaType === 'video' && (
+                                {mediaType === 'video' && !isRecording && (
                                     <button
                                         onClick={togglePlayPause}
                                         className="flex items-center gap-2 px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40"
@@ -322,21 +436,35 @@ export default function GreenScreenRemover() {
                                     </button>
                                 )}
 
-                                <button
-                                    onClick={downloadResult}
-                                    className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white rounded-xl font-semibold transition-all shadow-lg shadow-green-500/25 hover:shadow-green-500/40 btn-hover-lift"
-                                >
-                                    <Download className="w-5 h-5" />
-                                    Télécharger PNG
-                                </button>
+                                {!isRecording && (
+                                    <button
+                                        onClick={downloadResult}
+                                        className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-white rounded-xl font-semibold transition-all shadow-lg shadow-green-500/25 hover:shadow-green-500/40 btn-hover-lift"
+                                    >
+                                        <Download className="w-5 h-5" />
+                                        Télécharger PNG
+                                    </button>
+                                )}
 
-                                <button
-                                    onClick={reset}
-                                    className="flex items-center gap-2 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white rounded-xl font-semibold transition-all"
-                                >
-                                    <RotateCcw className="w-5 h-5" />
-                                    Recommencer
-                                </button>
+                                {mediaType === 'video' && !isRecording && (
+                                    <button
+                                        onClick={downloadVideo}
+                                        className="flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white rounded-xl font-semibold transition-all shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 btn-hover-lift"
+                                    >
+                                        <Film className="w-5 h-5" />
+                                        Télécharger Vidéo (WebM)
+                                    </button>
+                                )}
+
+                                {!isRecording && (
+                                    <button
+                                        onClick={reset}
+                                        className="flex items-center gap-2 px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white rounded-xl font-semibold transition-all"
+                                    >
+                                        <RotateCcw className="w-5 h-5" />
+                                        Recommencer
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}
