@@ -204,12 +204,12 @@ export default function GreenScreenRemover() {
         };
 
         // Start recording
-        mediaRecorder.start(50);
+        mediaRecorder.start(30);
 
-        // Reset video and set faster playback
+        // Reset video and set ULTRA FAST playback
         video.currentTime = 0;
         video.muted = true;
-        video.playbackRate = 4; // 4x faster processing
+        video.playbackRate = 8; // 8x faster processing - export ~8x more rapid
 
         // Process video frames at accelerated speed
         const processFrame = () => {
