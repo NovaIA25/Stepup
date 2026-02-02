@@ -160,39 +160,93 @@ export default function GreenScreenRemover() {
         const isGreen = chromaColor === 'green';
         const isBlue = chromaColor === 'blue';
 
+        // Normalized threshold (0-1 range for better control)
+        const normalizedThreshold = threshold / 255;
+        const spillFactor = spillRemoval / 50; // Increased range for stronger spill removal
+
         for (let i = 0; i < data.length; i += 4) {
             const red = data[i];
             const green = data[i + 1];
             const blue = data[i + 2];
 
-            let chromaDominance;
+            // Convert to normalized values
+            const r = red / 255;
+            const g = green / 255;
+            const b = blue / 255;
+
+            let chromaKey = 0;
+            let despillR = red, despillG = green, despillB = blue;
 
             if (isGreen) {
-                chromaDominance = green - Math.max(red, blue);
+                // Advanced green screen detection using color difference
+                const maxRB = Math.max(r, b);
+                const chromaDiff = g - maxRB;
+
+                // Calculate saturation-based mask
+                const maxC = Math.max(r, g, b);
+                const minC = Math.min(r, g, b);
+                const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
+
+                // Green dominance with saturation boost
+                chromaKey = Math.max(0, chromaDiff * (1 + saturation)) * 2;
+
+                // Aggressive spill removal - reduce green channel
+                if (spillFactor > 0) {
+                    const avgRB = (red + blue) / 2;
+                    // Subtract excess green
+                    despillG = Math.min(green, avgRB + (green - avgRB) * (1 - spillFactor));
+                    // Slight boost to other channels to compensate
+                    despillR = Math.min(255, red + (green - despillG) * 0.1);
+                    despillB = Math.min(255, blue + (green - despillG) * 0.1);
+                }
             } else if (isBlue) {
-                chromaDominance = blue - Math.max(red, green);
+                const maxRG = Math.max(r, g);
+                const chromaDiff = b - maxRG;
+                const maxC = Math.max(r, g, b);
+                const minC = Math.min(r, g, b);
+                const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
+
+                chromaKey = Math.max(0, chromaDiff * (1 + saturation)) * 2;
+
+                if (spillFactor > 0) {
+                    const avgRG = (red + green) / 2;
+                    despillB = Math.min(blue, avgRG + (blue - avgRG) * (1 - spillFactor));
+                    despillR = Math.min(255, red + (blue - despillB) * 0.1);
+                    despillG = Math.min(255, green + (blue - despillB) * 0.1);
+                }
             } else {
-                // Custom color detection using color distance
+                // Custom color detection
                 const dist = Math.sqrt(
-                    Math.pow(red - targetColor.r, 2) +
-                    Math.pow(green - targetColor.g, 2) +
-                    Math.pow(blue - targetColor.b, 2)
+                    Math.pow(r - targetColor.r / 255, 2) +
+                    Math.pow(g - targetColor.g / 255, 2) +
+                    Math.pow(b - targetColor.b / 255, 2)
                 );
-                chromaDominance = 255 - dist;
+                chromaKey = Math.max(0, 1 - dist * 2);
             }
 
-            if (chromaDominance > threshold) {
-                const alpha = Math.max(0, 255 - (chromaDominance - threshold) * (255 / smoothness));
+            // Apply threshold with smooth falloff
+            if (chromaKey > normalizedThreshold) {
+                // Smooth alpha calculation with edge feathering
+                const edgeFactor = (chromaKey - normalizedThreshold) / (1 - normalizedThreshold + 0.001);
+                const smoothEdge = Math.pow(edgeFactor, 1 / (smoothness / 10 + 0.5));
+                const alpha = Math.round((1 - Math.min(1, smoothEdge)) * 255);
+
                 data[i + 3] = alpha;
 
-                // Spill removal - reduce chroma color bleeding on edges
-                if (alpha > 0 && alpha < 255 && spillRemoval > 0) {
-                    const spillFactor = spillRemoval / 100;
-                    if (isGreen) {
-                        data[i + 1] = Math.max(0, green - (green - Math.max(red, blue)) * spillFactor);
-                    } else if (isBlue) {
-                        data[i + 2] = Math.max(0, blue - (blue - Math.max(red, green)) * spillFactor);
-                    }
+                // Apply despill to visible pixels
+                if (alpha > 0) {
+                    data[i] = despillR;
+                    data[i + 1] = despillG;
+                    data[i + 2] = despillB;
+                }
+            } else if (spillFactor > 0) {
+                // Apply light despill to non-keyed areas near threshold
+                const nearEdge = chromaKey / normalizedThreshold;
+                if (nearEdge > 0.5) {
+                    const edgeSpill = (nearEdge - 0.5) * 2 * spillFactor * 0.3;
+                    data[i] = Math.round(red + (despillR - red) * edgeSpill);
+                    data[i + 1] = Math.round(green + (despillG - green) * edgeSpill);
+                    data[i + 2] = Math.round(blue + (despillB - blue) * edgeSpill);
                 }
             }
         }
