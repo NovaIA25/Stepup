@@ -163,17 +163,23 @@ export default function GreenScreenRemover() {
         const video = videoRef.current;
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-        // Configure canvas stream
-        const stream = canvas.captureStream(30);
+        // Get video info
+        const duration = video.duration;
+        const fps = 30;
+        const totalFrames = Math.ceil(duration * fps);
+        const frameInterval = 1 / fps;
 
         // Try WebM with VP9, fallback to VP8
         const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
             ? 'video/webm;codecs=vp9'
             : 'video/webm;codecs=vp8';
 
+        // Configure canvas stream at higher FPS for faster processing
+        const stream = canvas.captureStream(60);
+
         const mediaRecorder = new MediaRecorder(stream, {
             mimeType,
-            videoBitsPerSecond: 5000000
+            videoBitsPerSecond: 8000000
         });
 
         mediaRecorderRef.current = mediaRecorder;
@@ -185,6 +191,7 @@ export default function GreenScreenRemover() {
         };
 
         mediaRecorder.onstop = () => {
+            video.playbackRate = 1;
             const blob = new Blob(recordedChunksRef.current, { type: mimeType });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -197,16 +204,21 @@ export default function GreenScreenRemover() {
         };
 
         // Start recording
-        mediaRecorder.start(100);
+        mediaRecorder.start(50);
 
-        // Reset video to beginning
+        // Reset video and set faster playback
         video.currentTime = 0;
         video.muted = true;
+        video.playbackRate = 4; // 4x faster processing
 
-        // Process video frames
+        // Process video frames at accelerated speed
         const processFrame = () => {
             if (video.ended || video.paused) {
-                mediaRecorder.stop();
+                setTimeout(() => {
+                    if (mediaRecorder.state === 'recording') {
+                        mediaRecorder.stop();
+                    }
+                }, 200);
                 return;
             }
 
@@ -216,9 +228,11 @@ export default function GreenScreenRemover() {
         };
 
         video.onended = () => {
-            if (mediaRecorder.state === 'recording') {
-                mediaRecorder.stop();
-            }
+            setTimeout(() => {
+                if (mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+            }, 200);
         };
 
         await video.play();
